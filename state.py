@@ -37,7 +37,7 @@ class TelemetryState:
 
         self.velocity = 0.0
         self.maxAltitude = 0.0
-        self.phase = "IDLE"
+        self.phase = "Standby"
         self.feedCount = 0
         self.ackCount = 0
         self.nackCount = 0
@@ -79,38 +79,44 @@ class TelemetryState:
         pressureValue = self.sensors["oxidizer_pressure"]
 
         if self.maxAltitude > 2.0:
-            if altitudeValue <= 0.05 and abs(self.velocity) <= 0.2:
-                self.phase = "LANDED"
+            if self.phase == "Landed" or (altitudeValue <= 0.2 and self.maxAltitude > 5.0):
+                self.phase = "Landed"
             elif fuelLevel > 0.0 and self.servos["fuel_main"] == SERVO_OPEN:
-                self.phase = "FLIGHT"
-            elif self.relays["parachute"] == 1:
-                self.phase = "PARACHUTE_DEPLOYED"
-            elif self.velocity <= 0.5:
-                self.phase = "APOGEE"
+                self.phase = "Powered Ascent"
+            elif self.relays["parachute"] == 1 or self.phase == "Parachute Descent":
+                if altitudeValue <= 0.2:
+                    self.phase = "Landed"
+                else:
+                    self.phase = "Parachute Descent"
+            elif self.velocity > 0.5:
+                self.phase = "Coasting to Apogee"
+            elif -2.0 <= self.velocity <= 0.5:
+                self.phase = "Apogee Reached"
             else:
-                self.phase = "COASTING"
+                self.phase = "Freefall Descent"
         else:
-            if oxidizerLevel < 100.0:
-                self.phase = "FILLING_OXIDIZER" if self.servos["oxidizer_intake"] == SERVO_OPEN else "IDLE"
-            elif fuelLevel < 100.0:
-                self.phase = "FILLING_FUEL" if self.servos["fuel_intake"] == SERVO_OPEN else "OXIDIZER_FILLED"
-            elif 55.0 <= pressureValue <= 65.0:
-                self.phase = "READY_TO_LAUNCH"
+            intakesClosed = (
+                self.servos["fuel_intake"] == SERVO_CLOSED
+                and self.servos["oxidizer_intake"] == SERVO_CLOSED
+            )
+            if oxidizerLevel < 99.0:
+                self.phase = "Filling Oxidizer Tank" if self.servos["oxidizer_intake"] == SERVO_OPEN else "Standby"
+            elif fuelLevel < 99.0:
+                self.phase = "Filling Fuel Tank" if self.servos["fuel_intake"] == SERVO_OPEN else "Oxidizer Loaded"
+            elif 55.0 <= pressureValue <= 65.0 and intakesClosed:
+                self.phase = "Ready for Launch"
             elif self.relays["oxidizer_heater"] == 1:
-                self.phase = "HEATING"
+                self.phase = "Heating Oxidizer Tank"
             else:
-                self.phase = "FUEL_FILLED"
+                self.phase = "Fuel Loaded"
 
-        elapsedSeconds = round(currentTime - (self.startTime or currentTime), 1)
-        metricPairs = (
-            ("time", f"{elapsedSeconds}s"),
-            ("altitude", round(altitudeValue, 1)),
-            ("velocity", round(self.velocity, 1)),
-            ("pressure", round(pressureValue, 1)),
-            ("fuel", round(fuelLevel, 1)),
-            ("oxidizer", round(oxidizerLevel, 1)),
-        )
-        for metricKey, metricValue in metricPairs:
-            self.history[metricKey].append(metricValue)
-            if len(self.history[metricKey]) > 100:
-                self.history[metricKey].pop(0)
+    def checkTouchdownTimeout(self, currentTime: float) -> None:
+        if self.phase == "Landed" or self.maxAltitude <= 5.0:
+            return
+        if self.lastAltitudeTime is None:
+            return
+        if self.sensors["altitude"] <= 5.5 and self.velocity < 0.0:
+            if currentTime - self.lastAltitudeTime > 1.2:
+                self.sensors["altitude"] = 0.0
+                self.velocity = 0.0
+                self.phase = "Landed"

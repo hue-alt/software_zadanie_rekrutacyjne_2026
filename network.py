@@ -100,7 +100,7 @@ class RocketClient:
                     try:
                         self.manager.connect(TcpSettings(self.proxyHost, self.proxyPort))
                         self.isConnected = True
-                        self.state.addLog(f"Połączono z proxy {self.proxyHost}:{self.proxyPort}")
+                        self.state.addLog(f"Connected to proxy {self.proxyHost}:{self.proxyPort}")
                     except Exception:
                         self.isConnected = False
                 time.sleep(0.1)
@@ -120,7 +120,7 @@ class RocketClient:
                         break
             except (ClosedTransportError, TransportError, CommunicationError, OSError):
                 self.isConnected = False
-                self.state.addLog("Utracono połączenie z proxy")
+                self.state.addLog("Disconnected from proxy")
                 try:
                     self.manager.disconnect()
                 except Exception:
@@ -142,12 +142,12 @@ class RocketClient:
             self.state.feedCount += 1
             if deviceType == int(ids.DeviceID.SENSOR):
                 self.state.updateSensor(deviceId, float(frame.data), now)
+                self.state.updatePhaseAndHistory(now)
             elif deviceType == int(ids.DeviceID.SERVO):
                 deviceName = self.state.servoNames.get(deviceId)
                 if deviceName:
                     self.state.servos[deviceName] = int(frame.data)
-                    if deviceName == "oxidizer_main":
-                        self.state.updatePhaseAndHistory(now)
+                    self.state.updatePhaseAndHistory(now)
 
         elif actionId in (int(ids.ActionID.ACK), int(ids.ActionID.NACK)):
             if actionId == int(ids.ActionID.ACK):
@@ -157,9 +157,14 @@ class RocketClient:
                     self.state.servos[deviceName] = int(frame.data)
                 elif deviceType == int(ids.DeviceID.RELAY):
                     deviceName = self.state.relayNames.get(deviceId, f"relay_{deviceId}")
-                    self.state.relays[deviceName] = 1 if operationId == int(ids.OperationID.RELAY.value.OPEN)
-                else 0
+                    if operationId == int(ids.OperationID.RELAY.value.OPEN):
+                        self.state.relays[deviceName] = 1
+                    else:
+                        self.state.relays[deviceName] = 0
+                else:
+                    self.state.addLog(f"RX ACK <- unknown device type: {deviceType}")
                 self.state.addLog(f"RX ACK <- {deviceName}")
+                self.state.updatePhaseAndHistory(now)
             else:
                 self.state.nackCount += 1
                 self.state.addLog(f"RX NACK <- device_id={deviceId}")
